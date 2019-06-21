@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  sgwhitelist
+  
+  Limits the outbound Internet access of an AWS security group to a set of domains by carrying out DNS lookups periodically.
+
+Globals:
+  Function:
+    Timeout: 15
+
+Resources:
+  # Update the allowed IP addresses.
+  UpdateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: update/
+      Handler: update
+      Runtime: go1.x
+      Tracing: Active
+      Events:
+        Periodic:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+      Environment:
+        Variables:
+          URLS: https://google.com
+          SECURITY_GROUPS: sg-12345
+
+Outputs:
+  UpdateFunction:
+    Description: "Update security groups to allow access to domains."
+    Value: !GetAtt UpdateFunction.Arn
