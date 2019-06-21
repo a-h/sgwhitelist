@@ -149,13 +149,15 @@ func authorizeAccessTo(securityGroup string, port int64, to []ipAccess) error {
 	for _, ipa := range to {
 		if ipa.ip.To4() != nil {
 			ipRanges = append(ipRanges, &ec2.IpRange{
-				CidrIp: aws.String(ipa.ip.String() + "/32"),
+				CidrIp:      aws.String(ipa.ip.String() + "/32"),
+				Description: aws.String(ipa.u.String()),
 			})
 			// It's not IP v6.
 			continue
 		}
 		ipV6Ranges = append(ipV6Ranges, &ec2.Ipv6Range{
-			CidrIpv6: aws.String(ipa.ip.String() + "/128"),
+			CidrIpv6:    aws.String(ipa.ip.String() + "/128"),
+			Description: aws.String(ipa.u.String()),
 		})
 	}
 	perm.SetIpRanges(ipRanges)
