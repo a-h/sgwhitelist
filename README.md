@@ -29,7 +29,7 @@ Configure the `template.yaml` to set the environment variables to set which URLs
 Create an `S3 bucket` to upload the Lambda function.
 
 ```bash
-aws s3 mb s3://BUCKET_NAME
+aws s3 mb s3://domain-whitelist-lambda
 ```
 
 Run the following command to package the Lambda to S3:
@@ -37,7 +37,7 @@ Run the following command to package the Lambda to S3:
 ```bash
 sam package \
     --output-template-file packaged.yaml \
-    --s3-bucket REPLACE_THIS_WITH_YOUR_S3_BUCKET_NAME
+    --s3-bucket domain-whitelist-lambda
 ```
 
 Next, the following command will create a Cloudformation Stack and deploy your SAM resources.
@@ -45,7 +45,7 @@ Next, the following command will create a Cloudformation Stack and deploy your S
 ```bash
 sam deploy \
     --template-file packaged.yaml \
-    --stack-name flowlog \
+    --stack-name sgwhitelist \
     --capabilities CAPABILITY_IAM
 ```
 

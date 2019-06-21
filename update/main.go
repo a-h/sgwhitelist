@@ -11,6 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws/awserr"
+
+	"github.com/aws/aws-sdk-go/aws"
+
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -50,16 +54,28 @@ func handler(request interface{}) error {
 	}
 
 	// Provide egress to the IP addresses to each of the security groups.
-	for _, sg := range sgs {
-		for u, addrs := range urlToAddresses {
-			for _, addr := range addrs {
-				p := port(u)
-				err := authorizeAccessTo(sg, addr, p)
-				if err != nil {
-					errs = append(errs, err)
-				}
-				log(u, sg, addr, p)
+	portToIPAccess := make(portToIPAccess)
+	for u, addrs := range urlToAddresses {
+		p := port(u)
+		for _, addr := range addrs {
+			ip := net.ParseIP(addr)
+			if ip != nil {
+				portToIPAccess[p] = append(portToIPAccess[p], ipAccess{
+					ip: ip,
+					u:  u,
+				})
 			}
+		}
+	}
+	for _, sg := range sgs {
+		for p, to := range portToIPAccess {
+			err := authorizeAccessTo(sg, p, to)
+			if err != nil {
+				log(sg, p, to, err)
+				errs = append(errs, err)
+				continue
+			}
+			log(sg, p, to, nil)
 		}
 	}
 	if err := joinErrs(errs); err != nil {
@@ -69,16 +85,31 @@ func handler(request interface{}) error {
 	return nil
 }
 
-func log(u *url.URL, sg, addr string, port int64) {
-	le := map[string]interface{}{
-		"time": time.Now().UTC(),
-		"url":  u.String(),
-		"sg":   sg,
-		"addr": addr,
-		"port": port,
+func log(sg string, port int64, to []ipAccess, err error) {
+	for _, ipa := range to {
+		le := struct {
+			Time  time.Time `json:"time"`
+			SG    string    `json:"sg"`
+			URL   string    `json:"url"`
+			Addr  string    `json:"addr"`
+			Port  int64     `json:"port"`
+			Err   string    `json:"err"`
+			Level string    `json:"level"`
+		}{
+			Time:  time.Now().UTC(),
+			SG:    sg,
+			URL:   ipa.u.String(),
+			Addr:  ipa.ip.String(),
+			Port:  port,
+			Level: "INFO",
+		}
+		if err != nil {
+			le.Level = "ERROR"
+			le.Err = err.Error()
+		}
+		e, _ := json.Marshal(le)
+		fmt.Println(string(e))
 	}
-	e, _ := json.Marshal(le)
-	fmt.Println(string(e))
 }
 
 func port(u *url.URL) int64 {
@@ -92,18 +123,54 @@ func port(u *url.URL) int64 {
 	return 443
 }
 
-func authorizeAccessTo(securityGroup string, ipAddress string, port int64) error {
+type portToIPAccess map[int64][]ipAccess
+
+type ipAccess struct {
+	// IP address to access.
+	ip net.IP
+	// Target URL, used for the description.
+	u *url.URL
+}
+
+func (a ipAccess) String() string {
+	return fmt.Sprintf("{ IP: %v, URL: %v}", a.ip.String(), a.u.String())
+}
+
+func authorizeAccessTo(securityGroup string, port int64, to []ipAccess) error {
 	sess := session.New()
 	client := ec2.New(sess)
-	input := &ec2.AuthorizeSecurityGroupEgressInput{}
-	input.SetGroupId(securityGroup)
-	input.SetIpProtocol("tcp")
-	input.SetFromPort(port)
-	input.SetToPort(port)
-	input.SetCidrIp(ipAddress + "/32")
+	perm := &ec2.IpPermission{}
+	perm.SetIpProtocol("tcp")
+	perm.SetFromPort(port)
+	perm.SetToPort(port)
+
+	ipRanges := []*ec2.IpRange{}
+	ipV6Ranges := []*ec2.Ipv6Range{}
+	for _, ipa := range to {
+		if ipa.ip.To4() != nil {
+			ipRanges = append(ipRanges, &ec2.IpRange{
+				CidrIp: aws.String(ipa.ip.String() + "/32"),
+			})
+			// It's not IP v6.
+			continue
+		}
+		ipV6Ranges = append(ipV6Ranges, &ec2.Ipv6Range{
+			CidrIpv6: aws.String(ipa.ip.String() + "/128"),
+		})
+	}
+	perm.SetIpRanges(ipRanges)
+	perm.SetIpv6Ranges(ipV6Ranges)
+
+	input := &ec2.AuthorizeSecurityGroupEgressInput{
+		GroupId:       aws.String(securityGroup),
+		IpPermissions: []*ec2.IpPermission{perm},
+	}
 	_, err := client.AuthorizeSecurityGroupEgress(input)
 	if err != nil {
-		return fmt.Errorf("whitelist lambda: failed to set security group info: %v", err)
+		if awserr, isAWSErr := err.(awserr.Error); isAWSErr && awserr.Code() == "InvalidPermission.Duplicate" {
+			return nil
+		}
+		return fmt.Errorf("whitelist lambda: failed to set security group info for %v string on port %d to %v: %v", securityGroup, port, to, err)
 	}
 	return err
 }

@@ -23,10 +23,18 @@ Resources:
           Type: Schedule
           Properties:
             Schedule: rate(5 minutes)
+      Policies:
+      - AWSLambdaExecute
+      - Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:AuthorizeSecurityGroupEgress
+            Resource: "arn:aws:ec2:eu-west-2:YOUR_ACCOUNT_ID:security-group/sg-YOUR_SECURITY_GROUP" # Use the full resource ARN for the group.
       Environment:
         Variables:
           URLS: https://google.com
-          SECURITY_GROUPS: sg-12345
+          SECURITY_GROUPS: sg-YOUR_SECURITY_GROUP
 
 Outputs:
   UpdateFunction:
